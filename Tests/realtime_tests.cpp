@@ -1,7 +1,9 @@
 #include "Core/RealtimeAnalyzer.h"
+#include "Core/TransportTracker.h"
 #include <cstdlib>
 #include <iostream>
 #include <new>
+#include <random>
 
 using namespace distortion;
 namespace {
@@ -21,6 +23,22 @@ void* operator new[](std::size_t n) { return ::operator new(n); }
 void operator delete[](void* p) noexcept { ::operator delete(p); }
 void operator delete[](void* p,std::size_t) noexcept { ::operator delete(p); }
 int main() {
+    TransportTracker transport;
+    for (int i=0;i<200;++i) require(!transport.update(i*1024+(i%3)-1,true,1024),"48k / 1024 rounded position is continuous");
+    require(transport.update(0,true,1024),"real backward seek invalidates");
+    transport.reset();
+    for (int i=0;i<200;++i) require(!transport.update((i/2)*2048,true,1024),"repeated host timestamps are continuous");
+    require(transport.update(400000,true,1024),"real forward seek invalidates");
+    require(transport.update(400000,false,1024),"transport stop invalidates");
+    ReadingContinuity continuity; Result good; good.status=Status::valid; good.percent=5;
+    const auto now=ReadingContinuity::Clock::now();
+    require(continuity.update(good,1,now).valid(),"valid reading accepted");
+    require(continuity.update(Result{},1,now+std::chrono::seconds(1)).valid(),"brief refit does not blank the number");
+    require(!continuity.update(Result{},1,now+std::chrono::seconds(3)).valid(),"held reading expires; never stays stale indefinitely");
+    continuity.update(good,1,now);
+    require(!continuity.update(Result{},2,now).valid(),"seek never reuses an old-epoch result");
+    continuity.update(good,2,now); Result missing; missing.status=Status::noReference;
+    require(!continuity.update(missing,2,now).valid(),"missing reference is never held");
     CaptureQueue queue; queue.prepare(64);
     require(!queue.hasPending(),"empty capture queue");
     float x[37]{}; for (int i=0;i<37;++i) x[i]=static_cast<float>(i);
@@ -70,7 +88,33 @@ int main() {
     meter.push<float>(nullptr,nullptr,wet.data(),wet.data(),256,false);
     require(meter.snapshot().status==Status::noReference,"missing sidechain");
     meter.stop();
+    // Intermittent 21 ms gaps used to reset every window before it could fill.
+    // Feed the exact reported host configuration, including a quiet block every
+    // 683 ms. Use broadband material so this checks acquisition, not sine mode.
+    meter.prepare(48000);
+    std::mt19937 rng(188); std::uniform_real_distribution<float> random(-.3f,.3f);
+    std::vector<float> pre(1024),post(1024);
+    int visible=0;
+    for (int blockIndex=0;blockIndex<200;++blockIndex) {
+        for (std::size_t i=0;i<pre.size();++i) { pre[i]=blockIndex%32==0?0.0f:random(rng); post[i]=pre[i]*.7f; }
+        forbidAllocation=true; meter.push(pre.data(),pre.data(),post.data(),post.data(),pre.size()); forbidAllocation=false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(22));
+        if (blockIndex>100 && meter.snapshot().valid()) ++visible;
+    }
+    const auto gapDeadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while (!meter.snapshot().valid() && std::chrono::steady_clock::now()<gapDeadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    require(meter.snapshot().valid(),"48k / 1024 acquires despite recurring short gaps");
+    std::fill(pre.begin(),pre.end(),0.0f);
+    meter.push(pre.data(),pre.data(),pre.data(),pre.data(),pre.size());
+    require(meter.snapshot().valid(),"one 1024-sample quiet block does not erase the number");
+    for (int i=0;i<12;++i) meter.push(pre.data(),pre.data(),pre.data(),pre.data(),pre.size());
+    require(!meter.snapshot().valid(),"sustained silence clears the reading");
+    meter.push<float>(nullptr,nullptr,post.data(),post.data(),1024,false);
+    require(meter.snapshot().status==Status::noReference,"explicit sidechain disconnect still clears immediately");
+    require(callbackAllocations==0,"quiet-gap path has no callback allocations");
+    meter.stop();
     for (int i=0;i<4;++i) { meter.prepare(i%2==0?44100:96000); meter.stop(); }
-    std::cout<<"Realtime failures="<<failures<<" callback allocations="<<callbackAllocations<<'\n';
+    std::cout<<"Realtime failures="<<failures<<" callback allocations="<<callbackAllocations<<" visible polls during gap test="<<visible<<'\n';
     return failures==0?EXIT_SUCCESS:EXIT_FAILURE;
 }

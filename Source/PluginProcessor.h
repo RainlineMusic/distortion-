@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "Core/RealtimeAnalyzer.h"
+#include "Core/TransportTracker.h"
 
 class DistortionAudioProcessor final : public juce::AudioProcessor {
 public:
@@ -32,7 +33,6 @@ private:
     template<class Sample> void capture(juce::AudioBuffer<Sample>&);
     void trackTransport(int samples);
     distortion::RealtimeAnalyzer analyzer;
-    bool hadTransport=false,wasPlaying=false;
-    juce::int64 expectedPosition=0;
+    distortion::TransportTracker transport;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(DistortionAudioProcessor)
 };

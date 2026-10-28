@@ -1,5 +1,6 @@
 #pragma once
 #include "Analyzer.h"
+#include "ReadingContinuity.h"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -58,7 +59,7 @@ public:
         queue.prepare(std::max(config.requiredSamples()*2,static_cast<std::size_t>(sampleRate*4)));
         epoch.fetch_add(1,std::memory_order_acq_rel);
         fallback.store(static_cast<int>(Status::measuring));
-        active=false; running.store(true);
+        active=false; quietReference=quietOutput=0; running.store(true);
         worker=std::thread([this] { run(); });
     }
     void stop() {
@@ -82,8 +83,16 @@ public:
             if (!std::isfinite(a)||!std::isfinite(b)||!std::isfinite(c)||!std::isfinite(d)) { invalidate(Status::invalid); return; }
             ex+=a*a+b*b; ey+=c*c+d*d;
         }
-        if (ex/count<2.e-14) { invalidate(Status::noReference); return; }
-        if (ey/count<2.e-14) { invalidate(Status::silence); return; }
+        // Preserve the actual zero samples in short musical gaps. One quiet
+        // host block must not restart the entire 1.65-second learning window.
+        const auto quietLimit=static_cast<std::size_t>(config.sampleRate*0.25);
+        quietReference=ex/count<2.e-14?std::min(quietLimit,quietReference+count):0;
+        quietOutput=ey/count<2.e-14?std::min(quietLimit,quietOutput+count):0;
+        if (quietReference>=quietLimit || quietOutput>=quietLimit) {
+            const auto reason=quietReference>=quietLimit?Status::noReference:Status::silence;
+            if (active || fallback.load(std::memory_order_relaxed)!=static_cast<int>(reason)) invalidate(reason);
+            return;
+        }
         if (!active) { invalidate(Status::measuring); active=true; }
         const auto tag=epoch.load(std::memory_order_relaxed);
         if (!queue.push(x0,x1,y0,y1,count,tag)) invalidate(Status::overload);
@@ -131,6 +140,7 @@ private:
         auto lastCapture=std::chrono::steady_clock::now();
         bool timedOut=false;
         Analyzer analyzer(config);
+        ReadingContinuity continuity;
         while (running.load(std::memory_order_acquire)) {
             const auto consumed=queue.consume([&](const CaptureFrame& frame) {
                 if (frame.epoch!=epoch.load(std::memory_order_acquire)) return;
@@ -149,7 +159,8 @@ private:
                 Result result;
                 try { result=analyzer.analyse(x,y); }
                 catch (...) { result.status=Status::invalid; }
-                if (tag==epoch.load(std::memory_order_acquire) && running.load(std::memory_order_acquire)) publish(result,tag);
+                if (tag==epoch.load(std::memory_order_acquire) && running.load(std::memory_order_acquire))
+                    publish(continuity.update(result,tag),tag);
                 sinceAnalysis=0;
             }
             // Hosts may stop calling processBlock entirely at transport stop.
@@ -164,6 +175,7 @@ private:
     CaptureQueue queue;
     std::thread worker;
     bool active=false; // audio-thread ownership; lifecycle writes only when stopped
+    std::size_t quietReference=0,quietOutput=0;
     std::atomic<bool> running{false};
     std::atomic<std::uint64_t> epoch{1}, publishedEpoch{0}, publication{0};
     std::atomic<int> fallback{0},status{0},method{0},delay{0},harmonics{0};

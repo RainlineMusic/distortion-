@@ -8,7 +8,7 @@ DistortionAudioProcessor::DistortionAudioProcessor()
 
 void DistortionAudioProcessor::prepareToPlay(double sampleRate,int maximumBlockSize) {
     juce::ignoreUnused(maximumBlockSize);
-    hadTransport=false; wasPlaying=false; expectedPosition=0;
+    transport.reset();
     setLatencySamples(0);
     analyzer.prepare(sampleRate);
 }
@@ -25,8 +25,7 @@ void DistortionAudioProcessor::trackTransport(int samples) {
     if (auto* head=getPlayHead()) if (const auto position=head->getPosition()) {
         const bool playing=position->getIsPlaying();
         if (const auto at=position->getTimeInSamples()) {
-            if (hadTransport && (playing!=wasPlaying || (playing && *at!=expectedPosition))) analyzer.invalidate();
-            expectedPosition=*at+samples; hadTransport=true; wasPlaying=playing;
+            if (transport.update(*at,playing,samples)) analyzer.invalidate();
         }
     }
 }
