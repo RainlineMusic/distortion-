@@ -1,0 +1,14 @@
+Internal ctest changing into directory: /workspace/scratch/37cf294f3813/build
+Test project /workspace/scratch/37cf294f3813/build
+    Start 1: DSP
+1/4 Test #1: DSP ..............................   Passed   10.67 sec
+    Start 2: Realtime
+2/4 Test #2: Realtime .........................   Passed    0.04 sec
+    Start 3: HarmonicCalibration
+3/4 Test #3: HarmonicCalibration ..............   Passed    0.51 sec
+    Start 4: Integration
+4/4 Test #4: Integration ......................   Passed    0.32 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =  11.53 sec

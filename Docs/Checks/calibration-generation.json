@@ -1,0 +1,58 @@
+{
+  "sampleRate": 48000,
+  "frequencyHz": 997.3,
+  "frames": 192000,
+  "definition": "THD_F = 100*sqrt(H2^2+H3^2)/fundamental",
+  "tests": [
+    {
+      "expectedPercent": 0.0,
+      "post": "post-0-percent.wav",
+      "measuredPercent": [
+        8.54649635239e-08,
+        6.83150622994e-08,
+        7.84332590133e-08
+      ],
+      "maximumErrorPercentagePoints": 8.54649635239e-08
+    },
+    {
+      "expectedPercent": 0.1,
+      "post": "post-0.1-percent.wav",
+      "measuredPercent": [
+        0.100000018863,
+        0.0999999949814,
+        0.0999999887203
+      ],
+      "maximumErrorPercentagePoints": 1.8862999995317153e-08
+    },
+    {
+      "expectedPercent": 1.0,
+      "post": "post-1-percent.wav",
+      "measuredPercent": [
+        0.99999998704,
+        1.00000002388,
+        1.00000000402
+      ],
+      "maximumErrorPercentagePoints": 2.3879999977438615e-08
+    },
+    {
+      "expectedPercent": 5.0,
+      "post": "post-5-percent.wav",
+      "measuredPercent": [
+        5.00000000097,
+        5.00000000305,
+        4.99999999907
+      ],
+      "maximumErrorPercentagePoints": 3.0500002523581315e-09
+    },
+    {
+      "expectedPercent": 10.0,
+      "post": "post-10-percent.wav",
+      "measuredPercent": [
+        9.99999998447,
+        10.000000009,
+        9.99999999148
+      ],
+      "maximumErrorPercentagePoints": 1.5530000396779542e-08
+    }
+  ]
+}

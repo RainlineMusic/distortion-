@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /workspace/scratch/37cf294f3813/build-sanitizer
+Test project /workspace/scratch/37cf294f3813/build-sanitizer
+    Start 2: Realtime
+1/1 Test #2: Realtime .........................   Passed    0.08 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.08 sec

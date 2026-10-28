@@ -1,0 +1,12 @@
+Internal ctest changing into directory: /workspace/scratch/37cf294f3813/build
+Test project /workspace/scratch/37cf294f3813/build
+    Start 2: Realtime
+1/3 Test #2: Realtime .........................   Passed    0.04 sec
+    Start 4: CLAPSmoke
+2/3 Test #4: CLAPSmoke ........................   Passed    0.01 sec
+    Start 5: Integration
+3/3 Test #5: Integration ......................   Passed    0.29 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Total Test time (real) =   0.34 sec
