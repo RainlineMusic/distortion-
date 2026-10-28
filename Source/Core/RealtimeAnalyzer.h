@@ -56,7 +56,7 @@ public:
     void prepare(double sampleRate) {
         stop();
         config=Config(sampleRate);
-        queue.prepare(std::max(config.requiredSamples()*2,static_cast<std::size_t>(sampleRate*4)));
+        queue.prepare(std::max(config.requiredSamples()*2,static_cast<std::size_t>(sampleRate*16)));
         epoch.fetch_add(1,std::memory_order_acq_rel);
         fallback.store(static_cast<int>(Status::measuring));
         active=false; quietReference=quietOutput=0; running.store(true);

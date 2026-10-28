@@ -129,6 +129,13 @@ void residualAndGuardTests() {
         }
         report("Hermite cubic "+std::to_string(ratio),a.analyse(x,y),100*ratio/std::sqrt(1+ratio*ratio),ratio*100*0.16);
     }
+    // A new distorted attack in held-out material is the quantity to measure,
+    // not a reason to discard a correctly fitted linear reference model.
+    y=x;
+    const auto start=n-static_cast<std::size_t>(cfg.maxDelay)-cfg.taps-cfg.validation;
+    for (std::size_t i=start;i<start+cfg.validation;++i) y[0][i]=std::clamp(y[0][i],-.12,.12);
+    const auto attack=a.analyse(x,y);
+    check(attack.valid() && attack.percent>1,"new nonlinear event must not blank the readout");
     auto zero=x; for (auto& v:zero[0]) v=0;
     check(a.analyse(zero,x).status==Status::noReference,"missing reference has no percentage");
     check(a.analyse(x,zero).status==Status::silence,"silence has no percentage");
@@ -137,7 +144,7 @@ void residualAndGuardTests() {
     check(a.analyse(x,y).status==Status::invalid,"NaN rejected");
     y=x; y[0].pop_back(); check(a.analyse(x,y).status==Status::invalid,"mismatched lengths rejected");
     auto note=tones(n,48000,400,0.1,0.05); y=note;
-    check(a.analyse(note,y).status==Status::insufficient,"narrow-band non-sine does not get a false reading");
+    report("narrow-band exact null",a.analyse(note,y),0.0,0.0001);
     auto periodic=noise(n),clipped=periodic;
     for (std::size_t i=0;i<n;++i) {
         periodic[0][i]=periodic[0][i%1024];
@@ -147,10 +154,31 @@ void residualAndGuardTests() {
     Channels shortInput(1,std::vector<double>(32,0.1));
     check(!a.analyse(shortInput,shortInput).valid(),"short window rejected");
 }
+void musicalRegression() {
+    Config cfg; Analyzer analyzer(cfg); const auto n=cfg.requiredSamples();
+    std::mt19937 rng(44);std::normal_distribution<double> random(0,1);
+    for (double noiseLevel:{.03,.6}) {
+        Channels x(2,std::vector<double>(n));double low=0;
+        for (std::size_t i=0;i<n;++i) {
+            const double t=i/48000.0;low=.98*low+.02*random(rng);
+            x[0][i]=.3*std::sin(2*pi*110*t)*(.6+.4*std::sin(7*t))+.12*std::sin(2*pi*329.63*t)+noiseLevel*low;
+            x[1][i]=.9*x[0][i]+.02*std::sin(2*pi*440*t);
+        }
+        auto y=x;for(auto& channel:y)for(auto& v:channel)v*=.8;
+        report("musical coloured gain",analyzer.analyse(x,y),0.0,0.0001);
+        if (noiseLevel>.1) {
+            y=x;for(auto& channel:y){double lowpass=0;for(auto& v:channel){lowpass=.8*lowpass+.2*v;v=lowpass;}}
+            report("musical coloured EQ",analyzer.analyse(x,y),0.0,0.08);
+            y=x;for(auto& channel:y)for(auto& v:channel)v=std::tanh(3*v)/3;
+            const auto nonlinear=analyzer.analyse(x,y);
+            check(nonlinear.valid() && nonlinear.percent>.1,"musical coloured nonlinear input remains measurable");
+        }
+    }
+}
 }
 int main() {
     const auto start=std::chrono::steady_clock::now();
-    toneTests(); linearTests(); residualAndGuardTests();
+    toneTests(); linearTests(); residualAndGuardTests(); musicalRegression();
     const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
     std::cout<<"Compared percentage cases="<<cases<<" failures="<<failures<<" elapsed="<<seconds<<"s\n";
     return failures==0 ? EXIT_SUCCESS : EXIT_FAILURE;

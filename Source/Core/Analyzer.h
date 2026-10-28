@@ -53,7 +53,7 @@ public:
         const auto alignment=align(inputs,processed);
         result.delaySamples=alignment.first; result.correlation=alignment.second;
         if (alignment.second<0.08) { result.status=Status::unrelated; return result; }
-        if (!broadbandEnough(inputs)) { result.status=Status::insufficient; return result; }
+        const bool excited=broadbandEnough(inputs);
 
         const auto validStart=n-static_cast<std::size_t>(config.maxDelay)-config.taps-config.validation;
         const auto trainStart=validStart-config.taps-config.train;
@@ -73,7 +73,9 @@ public:
         double predictedEnergy=0, cross=0;
         for (const auto& channel : processed) {
             std::vector<double> target(channel.begin()+static_cast<std::ptrdiff_t>(trainStart),channel.begin()+static_cast<std::ptrdiff_t>(trainStart+config.train));
-            const auto fit=model.fit(target,config.maxIterations);
+            auto fit=LinearModel::Fit{};
+            if (excited) fit=model.fit(target,config.maxIterations);
+            else { fit.h=model.affineSeed(target); fit.convergence=0; }
             result.iterations=std::max(result.iterations,fit.iterations);
             result.convergence=std::max(result.convergence,fit.convergence);
             if (fit.h.empty() || !std::isfinite(fit.convergence)) { result.status=Status::invalid; return result; }
@@ -98,8 +100,11 @@ public:
         result.predictionCorrelationSquared=cross*cross/std::max(signal*predictedEnergy,1.e-30);
         // Confidence checks do not declare the residue nonlinear: they only
         // reject an unrelated pair, a stalled fit or an unstable prediction.
-        if (result.predictionCorrelationSquared<0.15) result.status=Status::unrelated;
-        else if (result.convergence>2.e-4 || result.percent>4*result.trainingPercent+0.5)
+        // An exact affine/null match is identifiable even on a sustained note.
+        // A flexible FIR must still not memorize a periodic nonlinear output.
+        if (!excited && (result.percent>0.0001 || result.trainingPercent>0.0001)) result.status=Status::insufficient;
+        else if (result.predictionCorrelationSquared<0.15) result.status=Status::unrelated;
+        else if (result.convergence>2.e-4)
             result.status=Status::measuring;
         else result.status=Status::valid;
         return result;

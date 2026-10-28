@@ -46,6 +46,6 @@ struct Config {
     double sampleRate;
     std::size_t taps = 1024, train = 32768, validation = 16384;
     int maxDelay = 12000;
-    int maxIterations = 40;
+    int maxIterations = 80;
 };
 }
