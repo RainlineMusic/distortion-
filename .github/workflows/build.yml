@@ -1,0 +1,310 @@
+name: Build Distortion macOS and Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distortion-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLUGIN_VERSION: "0.1.0"
+
+jobs:
+  sources:
+    name: Check source files
+    runs-on: ubuntu-24.04
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        shell: bash
+        run: |
+          if [[ -f CMakeLists.txt && -f Source/PluginProcessor.cpp ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Upload the contents of the source archive into the repository root, then run this workflow again." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  dsp:
+    name: DSP / ${{ matrix.sanitizer }}
+    needs: sources
+    if: needs.sources.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [none, address]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure portable DSP and WAV analyzer
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DDISTORTION_BUILD_PLUGIN=OFF -DDISTORTION_SANITIZER=${{ matrix.sanitizer }}
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Regression and known-harmonic calibration
+        run: ctest --test-dir build --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DSP-validation-${{ matrix.sanitizer }}
+          path: |
+            build/Testing/Temporary/LastTest.log
+            build/calibration/calibration.json
+          if-no-files-found: ignore
+
+  macos:
+    needs: sources
+    if: needs.sources.outputs.ready == 'true'
+    runs-on: macos-14
+    timeout-minutes: 40
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JUCE 8.0.4 (pinned source)
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: 51d11a2be6d5c97ccf12b4e5e827006e19f0555a
+          path: JUCE
+          persist-credentials: false
+          sparse-checkout: |
+            modules
+            extras/Build
+
+      - name: Configure universal build
+        run: cmake -S . -B build -G Xcode -DJUCE_DIR="$PWD/JUCE" -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DDISTORTION_FORMATS="VST3;AAX;AU" -DDISTORTION_ENABLE_CLAP=ON -DDISTORTION_BUILD_UI_TESTS=ON
+
+      - name: Build VST3, AU, CLAP and AAX
+        run: cmake --build build --config Release --target Distortion_VST3 Distortion_AAX Distortion_AU Distortion_CLAP DistortionDSPTest DistortionRealtimeTest DistortionAnalyze DistortionIntegrationTest DistortionCLAPTest
+
+      - name: DSP and processor/UI regression tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Import Apple Developer ID certificate
+        id: apple-signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$MACOS_CERTIFICATE" && -z "$MACOS_CERTIFICATE_PASSWORD" && -z "$MACOS_SIGNING_IDENTITY" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "label=AdHoc" >> "$GITHUB_OUTPUT"
+            echo "::warning::Developer ID certificate is not configured. Artifacts are explicitly marked AdHoc, not Apple Developer ID signed."
+            exit 0
+          fi
+          : "${MACOS_CERTIFICATE:?Set MACOS_CERTIFICATE to the base64 P12 export}"
+          : "${MACOS_CERTIFICATE_PASSWORD:?Set MACOS_CERTIFICATE_PASSWORD}"
+          : "${MACOS_SIGNING_IDENTITY:?Set MACOS_SIGNING_IDENTITY to Developer ID Application}"
+
+          KEYCHAIN_PATH="$RUNNER_TEMP/distortion.keychain-db"
+          KEYCHAIN_PASSWORD="${MACOS_KEYCHAIN_PASSWORD:-temporary-password}"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/developer-id.p12" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "label=DeveloperID" >> "$GITHUB_OUTPUT"
+
+      - name: Sign and inspect all macOS plug-ins (no notarization)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mode="${{ steps.apple-signing.outputs.label }}"
+          printf 'Signing mode: %s\nNotarization: disabled\n' "$mode" > signing-macos.txt
+          for bundle in "build/Distortion_artefacts/Release/VST3/Distortion.vst3" "build/Distortion_artefacts/Release/AAX/Distortion.aaxplugin" "build/Distortion_artefacts/Release/AU/Distortion.component" "build/Distortion_artefacts/Release/CLAP/Distortion.clap"; do
+            if [[ "${{ steps.apple-signing.outputs.enabled }}" == "true" ]]; then
+              codesign --force --deep --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" "$bundle"
+            else
+              codesign --force --deep --sign - "$bundle"
+            fi
+            codesign --verify --deep --strict --verbose=2 "$bundle"
+            lipo "$bundle/Contents/MacOS/Distortion" -verify_arch arm64 x86_64
+            signature=$(codesign -dv --verbose=4 "$bundle" 2>&1)
+            if [[ "$mode" == "DeveloperID" ]] && ! grep -q '^Authority=Developer ID Application:' <<< "$signature"; then
+              echo "::error::Bundle does not have an Apple Developer ID Application signature: $bundle"
+              exit 1
+            fi
+            printf '\n%s\n%s\n' "$bundle" "$signature" >> signing-macos.txt
+          done
+          printf '### macOS signing\nMode: **%s**. Notarization is disabled.\n' "$mode" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate macOS AU
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          ditto "build/Distortion_artefacts/Release/AU/Distortion.component" "$HOME/Library/Audio/Plug-Ins/Components/Distortion.component"
+          /usr/libexec/PlistBuddy -c 'Print :AudioComponents' "build/Distortion_artefacts/Release/AU/Distortion.component/Contents/Info.plist" | tee au-registration-macos.log
+          killall -u "$(id -un)" -9 AudioComponentRegistrar 2>/dev/null || true
+          found=false
+          for attempt in 1 2 3 4 5; do
+            auval -a > au-components-macos.log 2>&1
+            if grep -Eq '^[[:space:]]*aufx[[:space:]]+DsRn[[:space:]]+RnLn([[:space:]]|$)' au-components-macos.log; then
+              found=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$found" != "true" ]]; then
+            cat au-components-macos.log
+            echo "::error::Distortion AU did not register after install. See AU metadata and component list artifacts."
+            exit 1
+          fi
+          auval -v aufx DsRn RnLn 2>&1 | tee auval-macos.log
+
+      - name: Validate macOS VST3
+        run: |
+          set -o pipefail
+          curl -fL https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip -o pluginval.zip
+          unzip -q pluginval.zip
+          chmod +x pluginval.app/Contents/MacOS/pluginval
+          pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --validate "$PWD/build/Distortion_artefacts/Release/VST3/Distortion.vst3" 2>&1 | tee pluginval-macos.log
+
+      - name: Package macOS plug-ins
+        run: |
+          mode="${{ steps.apple-signing.outputs.label }}"
+          ditto -c -k --sequesterRsrc --keepParent "build/Distortion_artefacts/Release/VST3/Distortion.vst3" "Distortion-v${PLUGIN_VERSION}-macOS-Universal-VST3-${mode}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "build/Distortion_artefacts/Release/AAX/Distortion.aaxplugin" "Distortion-v${PLUGIN_VERSION}-macOS-Universal-AAX-Developer-${mode}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "build/Distortion_artefacts/Release/AU/Distortion.component" "Distortion-v${PLUGIN_VERSION}-macOS-Universal-AU-${mode}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "build/Distortion_artefacts/Release/CLAP/Distortion.clap" "Distortion-v${PLUGIN_VERSION}-macOS-Universal-CLAP-${mode}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Distortion-v0.1.0-macOS-Universal-VST3-${{ steps.apple-signing.outputs.label }}
+          path: Distortion-v0.1.0-macOS-Universal-VST3-${{ steps.apple-signing.outputs.label }}.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Distortion-v0.1.0-macOS-Universal-AAX-Developer-${{ steps.apple-signing.outputs.label }}
+          path: Distortion-v0.1.0-macOS-Universal-AAX-Developer-${{ steps.apple-signing.outputs.label }}.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Distortion-v0.1.0-macOS-Universal-AU-${{ steps.apple-signing.outputs.label }}
+          path: Distortion-v0.1.0-macOS-Universal-AU-${{ steps.apple-signing.outputs.label }}.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Distortion-v0.1.0-macOS-Universal-CLAP-${{ steps.apple-signing.outputs.label }}
+          path: Distortion-v0.1.0-macOS-Universal-CLAP-${{ steps.apple-signing.outputs.label }}.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macOS-signing-and-AU-validation
+          path: |
+            signing-macos.txt
+            auval-macos.log
+            au-registration-macos.log
+            au-components-macos.log
+          if-no-files-found: ignore
+      - name: Remove temporary signing credentials
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/distortion.keychain-db" ]]; then security delete-keychain "$RUNNER_TEMP/distortion.keychain-db"; fi
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-log-macos
+          path: pluginval-macos.log
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Distortion-UI-macOS
+          path: build/ui-captures
+          if-no-files-found: ignore
+
+  windows:
+    needs: sources
+    if: needs.sources.outputs.ready == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JUCE 8.0.4 (pinned source)
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: 51d11a2be6d5c97ccf12b4e5e827006e19f0555a
+          path: JUCE
+          persist-credentials: false
+          sparse-checkout: |
+            modules
+            extras/Build
+
+      - name: Configure x64 build
+        run: cmake -S . -B build -A x64 -DJUCE_DIR="${{ github.workspace }}/JUCE" -DDISTORTION_FORMATS="VST3;AAX" -DDISTORTION_ENABLE_CLAP=ON -DDISTORTION_BUILD_UI_TESTS=ON
+
+      - name: Build VST3, CLAP, AAX and DSP tests
+        run: cmake --build build --config Release --target Distortion_VST3 Distortion_AAX Distortion_CLAP DistortionDSPTest DistortionRealtimeTest DistortionAnalyze DistortionIntegrationTest DistortionCLAPTest
+
+      - name: DSP and processor/UI regression tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Validate Windows VST3
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval-unpack
+          $validator = (Get-ChildItem pluginval-unpack -Recurse -Filter pluginval.exe | Select-Object -First 1).FullName
+          if (-not $validator) { throw "pluginval executable not found" }
+          & $validator --strictness-level 5 --validate "$PWD/build/Distortion_artefacts/Release/VST3/Distortion.vst3" 2>&1 | Tee-Object -FilePath pluginval-windows.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package Windows plug-ins
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "build/Distortion_artefacts/Release/VST3/Distortion.vst3" -DestinationPath "Distortion-v${env:PLUGIN_VERSION}-Windows-x64-VST3.zip"
+          Compress-Archive -Path "build/Distortion_artefacts/Release/AAX/Distortion.aaxplugin" -DestinationPath "Distortion-v${env:PLUGIN_VERSION}-Windows-x64-AAX-Developer.zip"
+          Compress-Archive -Path "build/Distortion_artefacts/Release/CLAP/*" -DestinationPath "Distortion-v${env:PLUGIN_VERSION}-Windows-x64-CLAP.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Distortion-v0.1.0-Windows-x64-VST3
+          path: Distortion-v0.1.0-Windows-x64-VST3.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Distortion-v0.1.0-Windows-x64-AAX-Developer
+          path: Distortion-v0.1.0-Windows-x64-AAX-Developer.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Distortion-v0.1.0-Windows-x64-CLAP
+          path: Distortion-v0.1.0-Windows-x64-CLAP.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-log-windows
+          path: pluginval-windows.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Distortion-UI-Windows
+          path: build/ui-captures
+          if-no-files-found: ignore
