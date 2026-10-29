@@ -4,12 +4,9 @@
 #include <mutex>
 
 namespace distortion {
-constexpr std::size_t graphBands=192;
 struct MeterView {
-    std::array<float,graphBands> before{},after{},residual{};
     double shortPercent=0,integratedPercent=0,seconds=0;
-    bool spectrumValid=false,residualValid=false,shortValid=false,integratedValid=false;
-    MeterView() { before.fill(-120); after.fill(-120); residual.fill(-120); }
+    bool shortValid=false,integratedValid=false;
 };
 // Worker-only energy accounting; every sample enters Integrated exactly once.
 class EnergyMeter {
@@ -51,23 +48,45 @@ inline Channels predictLive(const Channels& x,const PredictionModel& model,std::
     }
     return out;
 }
-inline std::array<float,graphBands> spectrum(const Channels& x,double fs) {
-    const auto length=x[0].size();FFT fft(nextPowerOfTwo(length));
-    std::vector<double> power(fft.n/2+1);std::vector<Complex> bins(fft.n);
-    double windowPower=0;
-    for(std::size_t c=0;c<x.size();++c) {
-        std::fill(bins.begin(),bins.end(),Complex{});
-        for(std::size_t i=0;i<length;++i) {const double w=.5-.5*std::cos(2*pi*i/(length-1));bins[i]=x[c][i]*w;if(c==0)windowPower+=w*w;}
-        fft.transform(bins);for(std::size_t i=1;i<power.size();++i)power[i]+=2*std::norm(bins[i])/(fft.n*windowPower*x.size());
+// Piecewise affine gain trajectories remove level and smooth envelope changes.
+// 20 ms is an explicit modelling assumption, not a universal THD separator.
+inline Channels compensateEnvelope(const Channels& predicted,const Channels& output,double fs) {
+    Channels residual=output;
+    const auto length=output[0].size(), step=std::max(std::size_t(8),static_cast<std::size_t>(fs*.02));
+    for(std::size_t c=0;c<output.size();++c) for(std::size_t first=0;first<length;first+=step) {
+        const auto end=std::min(length,first+step);double aa=0,ab=0,bb=0,ay=0,by=0;
+        for(auto i=first;i<end;++i) {
+            const double t=2.*double(i-first)/double(end-first)-1.,p=predicted[c][i],v=p*t;
+            aa+=p*p;ab+=p*v;bb+=v*v;ay+=p*output[c][i];by+=v*output[c][i];
+        }
+        const double determinant=aa*bb-ab*ab;
+        const double gain=determinant>1.e-25?(ay*bb-by*ab)/determinant:ay/std::max(aa,1.e-30);
+        const double slope=determinant>1.e-25?(by*aa-ay*ab)/determinant:0;
+        // An exact two-level gain jump is identifiable without discarding a
+        // whole block or waiting for the slow linear-model learner.
+        std::size_t split=first;double jump=0,previous=0;bool have=false;
+        for(auto i=first;i<end;++i) if(predicted[c][i]*predicted[c][i]>aa/double(end-first)*.01) {
+            const double ratio=output[c][i]/predicted[c][i];
+            if(have && std::abs(ratio-previous)>jump) {jump=std::abs(ratio-previous);split=i;}
+            previous=ratio;have=true;
+        }
+        bool exactStep=false;double gains[2]={0,0};
+        if(split>first && split<end && jump>.01) {
+            double e=0,signal=0;
+            for(int side=0;side<2;++side) {
+                const auto lo=side==0?first:split,hi=side==0?split:end;double xy=0,xx=0;
+                for(auto i=lo;i<hi;++i){xy+=predicted[c][i]*output[c][i];xx+=predicted[c][i]*predicted[c][i];}
+                gains[side]=xy/std::max(xx,1.e-30);
+                for(auto i=lo;i<hi;++i){const double d=output[c][i]-gains[side]*predicted[c][i];e+=d*d;signal+=output[c][i]*output[c][i];}
+            }
+            exactStep=signal>1.e-20 && e<signal*1.e-12;
+        }
+        for(auto i=first;i<end;++i) {
+            const double t=2.*double(i-first)/double(end-first)-1.;
+            if(exactStep) {residual[c][i]=output[c][i]-gains[i<split?0:1]*predicted[c][i];continue;}
+            residual[c][i]=output[c][i]-(gain+slope*t)*predicted[c][i];
+        }
     }
-    std::array<float,graphBands> result{};
-    for(std::size_t b=0;b<graphBands;++b) {
-        const double frequency=20*std::pow(1000.0,double(b)/(graphBands-1));
-        auto lo=std::max(std::size_t(1),std::size_t(frequency/std::pow(2.,1./12)*fft.n/fs));
-        auto hi=std::min(power.size()-1,std::size_t(frequency*std::pow(2.,1./12)*fft.n/fs));
-        double energy=0;for(auto i=lo;i<=hi && i<power.size();++i)energy+=power[i];
-        result[b]=float(std::max(-120.,10*std::log10(std::max(energy,1.e-12))));
-    }
-    return result;
+    return residual;
 }
 }

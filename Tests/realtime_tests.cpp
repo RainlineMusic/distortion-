@@ -23,6 +23,16 @@ void* operator new[](std::size_t n) { return ::operator new(n); }
 void operator delete[](void* p) noexcept { ::operator delete(p); }
 void operator delete[](void* p,std::size_t) noexcept { ::operator delete(p); }
 int main() {
+    Channels source(2,std::vector<double>(4800)), changed=source;
+    std::mt19937 randomSource(42);std::normal_distribution<double> normal(0,.15);
+    for(auto& channel:source)for(auto& sample:channel)sample=normal(randomSource);
+    auto ratio=[&](const Channels& y){auto e=compensateEnvelope(source,y,48000);double a=0,b=0;for(int c=0;c<2;++c){a+=energy(e[c]);b+=energy(y[c]);}return 100*std::sqrt(a/b);};
+    for(std::size_t c=0;c<2;++c)for(std::size_t i=0;i<4800;++i)changed[c][i]=source[c][i]*(i<1371?.5:2.);
+    require(ratio(changed)<1.e-8,"instant level jump produces no residual");
+    for(std::size_t c=0;c<2;++c)for(std::size_t i=0;i<4800;++i)changed[c][i]=source[c][i]*(.2+double(i)/4800);
+    require(ratio(changed)<1.e-8,"gain ramp produces no residual");
+    for(std::size_t c=0;c<2;++c)for(std::size_t i=0;i<4800;++i)changed[c][i]=std::tanh(source[c][i]*4)/4;
+    require(ratio(changed)>5,"saturation survives envelope compensation");
     TransportTracker transport;
     for (int i=0;i<200;++i) require(!transport.update(i*1024+(i%3)-1,true,1024),"48k / 1024 rounded position is continuous");
     require(transport.update(0,true,1024),"real backward seek invalidates");

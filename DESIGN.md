@@ -1,14 +1,11 @@
 ---
 name: Distortion
-description: Native spectral and residual analyzer in Clip Pocket Solid Dark.
+description: Compact native music residual meter in Clip Pocket Solid Dark.
 colors:
   chassis: "#151d25"
-  chassis-light: "#1c2732"
   glass: "#14191f"
   label: "#adb9c7"
-  before: "#8eafa7"
-  after: "#a9cbee"
-  residual: "#e5b887"
+  value: "#a9cbee"
   button: "#27333e"
 typography:
   title:
@@ -34,89 +31,47 @@ spacing:
 components:
   analyzer-surface:
     backgroundColor: "{colors.chassis}"
-    width: "800px"
-    height: "648px"
-  spectrum-panel:
-    backgroundColor: "{colors.glass}"
-    rounded: "{rounded.recess}"
-    width: "764px"
-    height: "461px"
+    width: "560px"
+    height: "236px"
   measurement-panel:
     backgroundColor: "{colors.glass}"
     rounded: "{rounded.recess}"
-    width: "764px"
-    height: "102px"
+    width: "524px"
+    height: "138px"
 ---
 
 # Design System: Distortion
 
 ## Overview
 
-**Creative North Star: "Clip Pocket Solid Dark"**
+Clip Pocket Solid Dark, reduced to a compact music meter. A flat dark blue-gray chassis, embedded Inter and two pale blue percentage values make Short and Integrated the focus. The header reads “Distortion” and “Music estimate”. No graphs, spectra or Momentary meter appear.
 
-A native instrument in the supplied dark blue-gray material. Embedded Inter, recessed panels and restrained trace colors preserve the Clip Pocket identity while giving spectral comparison the largest area.
+## Typography and color
 
-**Key Characteristics:**
+Embedded Inter Medium is used for the 25-pixel title and 12-pixel meter labels; Inter Regular is used for 43-pixel values and 11-pixel details. Sizes are JUCE logical font heights passed to `FontOptions::withHeight`. Muted ink labels and a fine divider support the pale blue values. Reset uses a darker blue-gray button surface.
 
-- Before/after spectra above the added residual spectrum.
-- A separate Short / Integrated measurement panel with Reset; no Momentary meter.
-- A fixed native window and a quiet dark radial chassis.
+## Layout and rendering
 
-## Colors
+The editor is fixed at 560 × 236 logical pixels and is not resizable. Native host/OS scaling applies. The measurement recess is `(18, 70, 524, 138)`, with a divider at x=272 from y=86 to 188. Short occupies the left column and Integrated the right. Value bounds are `(32, 112, 218, 55)` and `(292, 112, 238, 55)`. Reset is below the panel at `(464, 209, 78, 24)`.
 
-The frontmatter owns the palette. Green identifies Before, pale blue identifies After and both percentage readouts, and amber identifies added residual. Muted ink labels, low-opacity ink grid lines and dark recesses support the data without competing with it. Reset uses a darker blue-gray button surface.
+A flat chassis and nearly square 2-pixel recess corners preserve the supplied identity. The background is cached as an RGB image on resize and drawn with JUCE Graphics, without a custom OpenGL context or decorative animation.
 
-## Typography
+## Measurement states
 
-Embedded Inter Medium is used for the title and section labels; Inter Regular is used for values and details. Sizes are JUCE logical font heights passed to `FontOptions::withHeight`, not measured glyph bounds or CSS em sizes. The title uses the title token; values use the value token. State messages use 13–14 logical pixels.
-
-## Layout
-
-The editor is fixed at 800 × 648 logical pixels and is not resizable. Host/OS scaling remains native; there are no responsive breakpoints.
-
-The spectrum recess is `(18, 66, 764, 461)` and the measurement recess is `(18, 535, 764, 102)`. Before/after plot bounds are `(72, 115, 686, 196)`; residual plot bounds are `(72, 381, 686, 107)`. Both plots share a logarithmic 20 Hz–20 kHz axis and a displayed −96 to 0 dBFS range. These are raw signal spectra per 1/6 octave, not a system transfer response.
-
-Short sits at the left of the bottom panel and Integrated at the center, with a vertical divider between them. Reset sits at the right. The title and `Estimated residual` descriptor occupy the header.
-
-## Elevation & Depth
-
-A radial gradient shades the chassis from its upper left. Flat dark recesses and fine, low-opacity dividers establish depth; there are no raised cards or decorative shadows. The chassis is cached as an RGB image on resize and drawn with JUCE Graphics, without a custom OpenGL context.
-
-## Shapes
-
-The window is rectangular. Recesses have nearly square corners using the recess token. Traces use curved 1.65-pixel strokes. Grid lines are subtle and subordinate to traces.
-
-## Components
-
-### Spectral comparison
-
-Before is green and After is blue, with labeled line samples in the legend. Residual is amber in the lower plot. The display uses 192 logarithmically spaced band centers. Without spectrum data, show the routing prompt in the upper plot; while a model is unavailable, show `Learning the linear response...` in the lower plot.
-
-### Residual measurements
-
-Short is a rolling three-second ratio of sample energies, updated every 100 ms after model learning. Integrated is the ratio of summed residual and output energies since reset; warm-up and unavailable data do not contribute. Measured seconds appear below Integrated. These are residual estimates including noise, changing dynamics and model error, not certified loudness or harmonic THD readouts.
+Short is a rolling three-second ratio of accepted sample energies, updated every 100 ms after model learning. Integrated uses summed residual and output energies since reset; warm-up and unavailable data do not contribute. Measured seconds appear below Integrated. The readouts estimate music residual after linear-response and 20 ms envelope compensation. Noise, fast dynamics and model error can remain; compensation can also remove some nonlinear energy, especially at low frequencies. They are not true THD or loudness readouts and cannot independently identify every compressor or transient shaper.
 
 Valid percentages below `0.005` display `0.00%`; below `100` use two decimals; below `10000` use one decimal; larger values display `>9999%`. Unavailable values use an em dash. Accessible titles distinguish Short and Integrated; descriptions explain their definitions.
 
-### Reset
+Reset has the accessible title `Reset integrated measurement`. It clears Integrated energy and measured time while preserving Short. Pause makes Short unavailable; pause and capture-epoch changes preserve accumulated Integrated energy. A new capture epoch restarts Short.
 
-The native JUCE text button is labeled `Reset` and has an accessible title of `Reset integrated measurement`. It clears Integrated energy and elapsed measured time while preserving Short. Pause makes Short unavailable; pause and capture-epoch changes preserve accumulated Integrated energy.
+## Refresh and performance
 
-### Refresh
+The editor polls at 10 Hz and attempts a nonblocking meter snapshot; if the worker holds the mutex, the UI keeps its previous values. Learning and FFT convolution run off the audio thread. The learner waits two seconds after a completed fit before another fit. There is no graph rendering or spectrum calculation.
 
-The editor polls at 10 Hz. Analysis and spectrum generation run off the audio thread. No idle animation is added.
+## Rules
 
-## Do's and Don'ts
-
-### Do:
-
-- Do retain Clip Pocket Solid Dark and embedded Inter.
-- Do keep Before green, After blue and residual amber.
-- Do keep Short and Integrated in their separate panel.
-- Do preserve native host/OS scaling and meaningful accessible descriptions.
-
-### Don't:
-
-- Don't add a Momentary meter.
-- Don't label residual as true THD, loudness or transfer response.
-- Don't add decorative animation or a custom OpenGL context.
+- Retain Clip Pocket Solid Dark, embedded Inter and native scaling.
+- Keep Short, Integrated, measured seconds and Reset easy to read.
+- Describe the result as a music residual estimate, with meaningful accessible descriptions.
+- Do not add graphs, a Momentary meter, decorative animation or a custom OpenGL context.
+- Do not label residual as true THD, loudness or an exact isolated measure of nonlinear processing.

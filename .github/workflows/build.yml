@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PLUGIN_VERSION: "0.1.3"
+  PLUGIN_VERSION: "0.1.4"
 
 jobs:
   sources:
@@ -187,23 +187,23 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Distortion-v0.1.3-macOS-Universal-VST3-${{ steps.apple-signing.outputs.label }}
-          path: Distortion-v0.1.3-macOS-Universal-VST3-${{ steps.apple-signing.outputs.label }}.zip
+          name: Distortion-v0.1.4-macOS-Universal-VST3-${{ steps.apple-signing.outputs.label }}
+          path: Distortion-v0.1.4-macOS-Universal-VST3-${{ steps.apple-signing.outputs.label }}.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: Distortion-v0.1.3-macOS-Universal-AAX-Developer-${{ steps.apple-signing.outputs.label }}
-          path: Distortion-v0.1.3-macOS-Universal-AAX-Developer-${{ steps.apple-signing.outputs.label }}.zip
+          name: Distortion-v0.1.4-macOS-Universal-AAX-Developer-${{ steps.apple-signing.outputs.label }}
+          path: Distortion-v0.1.4-macOS-Universal-AAX-Developer-${{ steps.apple-signing.outputs.label }}.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: Distortion-v0.1.3-macOS-Universal-AU-${{ steps.apple-signing.outputs.label }}
-          path: Distortion-v0.1.3-macOS-Universal-AU-${{ steps.apple-signing.outputs.label }}.zip
+          name: Distortion-v0.1.4-macOS-Universal-AU-${{ steps.apple-signing.outputs.label }}
+          path: Distortion-v0.1.4-macOS-Universal-AU-${{ steps.apple-signing.outputs.label }}.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: Distortion-v0.1.3-macOS-Universal-CLAP-${{ steps.apple-signing.outputs.label }}
-          path: Distortion-v0.1.3-macOS-Universal-CLAP-${{ steps.apple-signing.outputs.label }}.zip
+          name: Distortion-v0.1.4-macOS-Universal-CLAP-${{ steps.apple-signing.outputs.label }}
+          path: Distortion-v0.1.4-macOS-Universal-CLAP-${{ steps.apple-signing.outputs.label }}.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
@@ -283,18 +283,18 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Distortion-v0.1.3-Windows-x64-VST3
-          path: Distortion-v0.1.3-Windows-x64-VST3.zip
+          name: Distortion-v0.1.4-Windows-x64-VST3
+          path: Distortion-v0.1.4-Windows-x64-VST3.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: Distortion-v0.1.3-Windows-x64-AAX-Developer
-          path: Distortion-v0.1.3-Windows-x64-AAX-Developer.zip
+          name: Distortion-v0.1.4-Windows-x64-AAX-Developer
+          path: Distortion-v0.1.4-Windows-x64-AAX-Developer.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
-          name: Distortion-v0.1.3-Windows-x64-CLAP
-          path: Distortion-v0.1.3-Windows-x64-CLAP.zip
+          name: Distortion-v0.1.4-Windows-x64-CLAP
+          path: Distortion-v0.1.4-Windows-x64-CLAP.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

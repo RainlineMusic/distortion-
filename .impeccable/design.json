@@ -8,10 +8,6 @@
         "role": "neutral",
         "displayName": "Chassis Dark"
       },
-      "chassis-light": {
-        "role": "neutral",
-        "displayName": "Chassis Light"
-      },
       "glass": {
         "role": "neutral",
         "displayName": "Recess Glass"
@@ -20,17 +16,9 @@
         "role": "neutral",
         "displayName": "Muted Ink"
       },
-      "before": {
-        "role": "primary",
-        "displayName": "Before Green"
-      },
       "after": {
         "role": "primary",
-        "displayName": "After Blue"
-      },
-      "residual": {
-        "role": "primary",
-        "displayName": "Residual Amber"
+        "displayName": "Readout Blue"
       },
       "button": {
         "role": "neutral",
@@ -52,7 +40,7 @@
       },
       "detail": {
         "displayName": "Detail",
-        "purpose": "Embedded Inter Regular; axes and measurement details."
+        "purpose": "Embedded Inter Regular; measurement details."
       }
     },
     "shadows": [],
@@ -65,48 +53,23 @@
       "resizable": false,
       "scaling": "Native host/OS pixel scaling; logical pixels.",
       "size": [
-        800,
-        648
+        560,
+        236
       ],
-      "plotBounds": {
-        "beforeAfter": [
-          72,
-          115,
-          686,
-          196
-        ],
-        "residual": [
-          72,
-          381,
-          686,
-          107
-        ]
-      },
       "panelBounds": {
-        "spectra": [
-          18,
-          66,
-          764,
-          461
-        ],
         "measurements": [
           18,
-          535,
-          764,
-          102
+          70,
+          524,
+          138
         ]
       },
-      "material": "Radial chassis gradient, dark recesses and fine ink dividers; cached RGB chassis.",
+      "material": "Flat dark chassis, dark recess and fine ink divider; cached RGB chassis.",
       "rendering": "JUCE Graphics; no custom OpenGL context.",
       "refreshHz": 10,
       "visibleContent": [
         "Distortion",
-        "Estimated residual",
-        "SPECTRUM",
-        "Before",
-        "After",
-        "ADDED RESIDUAL",
-        "dBFS / 1/6 octave",
+        "Music estimate",
         "Short",
         "Integrated",
         "Reset",
@@ -114,12 +77,14 @@
         "measured seconds"
       ],
       "states": {
-        "unavailable": "Em dash; routing prompt without spectrum data, learning prompt without model.",
+        "unavailable": "Em dash while routing, learning or data availability is insufficient.",
         "short": "Three seconds of sample energies; updated every 100 ms after model learning.",
         "integrated": "Summed residual/output energies since reset; warm-up excluded.",
         "reset": "Clears Integrated and measured time; preserves Short.",
         "pause": "Short unavailable; Integrated preserved. New capture epoch resets Short."
-      }
+      },
+      "snapshot": "Nonblocking try-lock; retain previous values if the worker owns the meter mutex.",
+      "spectrumCalculation": false
     }
   },
   "components": [
@@ -127,30 +92,31 @@
       "name": "Residual measurement panel",
       "kind": "custom",
       "refersTo": "measurement-panel",
-      "description": "HTML reference for the native Short / Integrated panel; production uses JUCE font metrics. Reset clears only Integrated.",
-      "html": "<div class=\"ds-panel\"><section><b>Short</b><strong>2.50%</strong><small>3 s / 100 ms</small></section><section><b>Integrated</b><strong>2.50%</strong><small>12.0 s measured</small></section><button>Reset</button></div>",
-      "css": ".ds-panel{display:flex;align-items:center;gap:36px;width:716px;padding:12px 24px;background:#14191f;color:#adb9c7;font-family:Inter,sans-serif;border-radius:2px}.ds-panel section{display:flex;flex-direction:column;min-width:220px}.ds-panel b{font-size:12px;font-weight:500}.ds-panel strong{font-size:43px;color:#a9cbee;font-weight:400}.ds-panel small{font-size:11px}.ds-panel button{background:#27333e;color:#adb9c7;border:1px solid #adb9c744;padding:8px 18px;border-radius:3px}.ds-panel button:hover{background:#31404e}.ds-panel button:focus-visible{outline:2px solid #a9cbee;outline-offset:2px}"
+      "description": "Compact native Short / Integrated panel; production uses JUCE font metrics. Reset sits below and clears only Integrated.",
+      "html": "<div class=\"ds-panel\"><section><b>Short</b><strong>2.50%</strong><small>3 s / 100 ms</small></section><section><b>Integrated</b><strong>2.50%</strong><small>12.0 s measured</small></section></div><button>Reset</button>",
+      "css": ".ds-panel{display:flex;align-items:center;gap:36px;width:476px;padding:12px 24px;background:#14191f;color:#adb9c7;font-family:Inter,sans-serif;border-radius:2px}.ds-panel section{display:flex;flex-direction:column;min-width:200px}.ds-panel b{font-size:12px;font-weight:500}.ds-panel strong{font-size:43px;color:#a9cbee;font-weight:400}.ds-panel small{font-size:11px}.ds-panel button{background:#27333e;color:#adb9c7;border:1px solid #adb9c744;padding:8px 18px;border-radius:3px}.ds-panel button:hover{background:#31404e}.ds-panel button:focus-visible{outline:2px solid #a9cbee;outline-offset:2px}"
     }
   ],
   "narrative": {
     "northStar": "Clip Pocket Solid Dark",
-    "overview": "A native instrument in the supplied dark blue-gray material. Embedded Inter, recessed panels and restrained trace colors preserve the Clip Pocket identity while giving spectral comparison the largest area.",
+    "overview": "Compact native music residual meter with embedded Inter, a flat dark chassis and two pale blue percentage readouts.",
     "keyCharacteristics": [
-      "Before/after spectra above the added residual spectrum.",
-      "A separate Short / Integrated measurement panel with Reset; no Momentary meter.",
-      "A fixed native window and a quiet dark radial chassis."
+      "Short / Integrated with Reset; no graphs or Momentary meter.",
+      "Fixed 560 × 236 native window.",
+      "Music estimate after linear-response and 20 ms envelope compensation."
     ],
-    "rules": [],
+    "rules": [
+      "No spectrum calculations; background FFT convolution remains for prediction.",
+      "Poll at 10 Hz with a nonblocking meter snapshot."
+    ],
     "dos": [
-      "Do retain Clip Pocket Solid Dark and embedded Inter.",
-      "Do keep Before green, After blue and residual amber.",
-      "Do keep Short and Integrated in their separate panel.",
-      "Do preserve native host/OS scaling and meaningful accessible descriptions."
+      "Retain Clip Pocket Solid Dark and embedded Inter.",
+      "Preserve native scaling and meaningful accessible descriptions."
     ],
     "donts": [
-      "Don't add a Momentary meter.",
-      "Don't label residual as true THD, loudness or transfer response.",
-      "Don't add decorative animation or a custom OpenGL context."
+      "Do not label residual as true THD, loudness or exact isolated nonlinear energy.",
+      "Do not claim independence from every compressor or transient shaper.",
+      "Do not add graphs, decorative animation or a custom OpenGL context."
     ]
   }
 }

@@ -102,6 +102,10 @@ public:
         if (!queue.push(x0,x1,y0,y1,count,tag)) invalidate(Status::overload);
     }
     MeterView meterSnapshot() const { std::lock_guard<std::mutex> lock(meterMutex); return view; }
+    bool tryMeterSnapshot(MeterView& destination) const {
+        std::unique_lock<std::mutex> lock(meterMutex,std::try_to_lock);
+        if(!lock.owns_lock())return false; destination=view;return true;
+    }
     void resetIntegrated() noexcept { resetMeter.fetch_add(1); }
     Result snapshot() const noexcept {
         Result result;
@@ -147,6 +151,7 @@ private:
         bool timedOut=false;
         Analyzer analyzer(config);
         ReadingContinuity continuity;
+        auto nextFit=std::chrono::steady_clock::now();
         while (running.load(std::memory_order_acquire)) {
             const auto consumed=queue.consume([&](const CaptureFrame& frame) {
                 if (frame.epoch!=epoch.load(std::memory_order_acquire)) return;
@@ -155,7 +160,7 @@ private:
                 filled=std::min(filled+1,needed); ++sinceAnalysis;
             });
             if (consumed>0) { lastCapture=std::chrono::steady_clock::now(); timedOut=false; }
-            if (filled==needed && sinceAnalysis>=static_cast<std::size_t>(config.sampleRate*0.5)
+            if (std::chrono::steady_clock::now()>=nextFit && filled==needed && sinceAnalysis>=static_cast<std::size_t>(config.sampleRate*0.5)
                 && tag==epoch.load(std::memory_order_acquire)) {
                 Channels x(2,std::vector<double>(needed)),y=x;
                 for (std::size_t i=0;i<needed;++i) {
@@ -173,6 +178,7 @@ private:
                 if (tag==epoch.load(std::memory_order_acquire) && running.load(std::memory_order_acquire))
                     publish(continuity.update(result,tag),tag);
                 sinceAnalysis=0;
+                nextFit=std::chrono::steady_clock::now()+std::chrono::seconds(2);
             }
             // Hosts may stop calling processBlock entirely at transport stop.
             if (!timedOut && !queue.hasPending()
@@ -199,24 +205,25 @@ private:
             while(history.size()>=2*margin+hop) {
                 PredictionModel model;
                 {std::lock_guard<std::mutex> lock(modelMutex);if(modelEpoch==tag)model=liveModel;}
-                Channels x(2,std::vector<double>(hop)),y=x,e=x;
+                Channels y(2,std::vector<double>(hop)),e=y;
                 for(std::size_t i=0;i<hop;++i) {
-                    const auto& f=history[margin+i];x[0][i]=f.x0;x[1][i]=f.x1;y[0][i]=f.y0;y[1][i]=f.y1;
+                    const auto& f=history[margin+i];y[0][i]=f.y0;y[1][i]=f.y1;
                 }
-                MeterView next;next.before=spectrum(x,config.sampleRate);next.after=spectrum(y,config.sampleRate);next.spectrumValid=true;
+                MeterView next;
                 if(model.valid()) {
                     Channels input(2,std::vector<double>(hop+model.taps-1));
                     const auto first=static_cast<std::ptrdiff_t>(margin)-model.delay+static_cast<std::ptrdiff_t>(model.taps/4)-static_cast<std::ptrdiff_t>(model.taps-1);
                     for(std::size_t i=0;i<input[0].size();++i) {const auto& f=history[static_cast<std::size_t>(first)+i];input[0][i]=f.x0;input[1][i]=f.x1;}
                     const auto predicted=predictLive(input,model,hop);
+                    e=compensateEnvelope(predicted,y,config.sampleRate);
                     double means[2]={0,0};
                     for(std::size_t c=0;c<2;++c) means[c]=std::accumulate(y[c].begin(),y[c].end(),0.)/hop;
                     for(std::size_t i=0;i<hop;++i) {
                         double err=0,sig=0;
-                        for(std::size_t c=0;c<2;++c) {e[c][i]=y[c][i]-predicted[std::min(c,predicted.size()-1)][i];err+=e[c][i]*e[c][i];sig+=(y[c][i]-means[c])*(y[c][i]-means[c]);}
+                        for(std::size_t c=0;c<2;++c) {err+=e[c][i]*e[c][i];sig+=(y[c][i]-means[c])*(y[c][i]-means[c]);}
                         energies.add(err,sig);
                     }
-                    next.residual=spectrum(e,config.sampleRate);next.residualValid=true;
+                    
                 }
                 energies.fill(next,config.sampleRate);
                 if(!model.valid())next.shortValid=false;

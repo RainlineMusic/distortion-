@@ -30,6 +30,7 @@ public:
     void setStateInformation(const void*,int) override;
     distortion::Result measurement() const noexcept { return analyzer.snapshot(); }
     distortion::MeterView meters() const { return analyzer.meterSnapshot(); }
+    bool tryMeters(distortion::MeterView& v) const { return analyzer.tryMeterSnapshot(v); }
     void resetIntegrated() { analyzer.resetIntegrated(); }
 private:
     template<class Sample> void capture(juce::AudioBuffer<Sample>&);
