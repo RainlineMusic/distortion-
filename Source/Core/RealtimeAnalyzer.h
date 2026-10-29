@@ -1,5 +1,5 @@
 #pragma once
-#include "Analyzer.h"
+#include "LiveMeter.h"
 #include "ReadingContinuity.h"
 #include <atomic>
 #include <chrono>
@@ -56,15 +56,18 @@ public:
     void prepare(double sampleRate) {
         stop();
         config=Config(sampleRate);
+        meterQueue.prepare(static_cast<std::size_t>(sampleRate*4));
         queue.prepare(std::max(config.requiredSamples()*2,static_cast<std::size_t>(sampleRate*16)));
         epoch.fetch_add(1,std::memory_order_acq_rel);
         fallback.store(static_cast<int>(Status::measuring));
         active=false; quietReference=quietOutput=0; running.store(true);
         worker=std::thread([this] { run(); });
+        meterWorker=std::thread([this] { runMeter(); });
     }
     void stop() {
         running.store(false,std::memory_order_release);
         if (worker.joinable()) worker.join();
+        if (meterWorker.joinable()) meterWorker.join();
         fallback.store(static_cast<int>(Status::measuring));
         epoch.fetch_add(1,std::memory_order_acq_rel);
     }
@@ -95,8 +98,11 @@ public:
         }
         if (!active) { invalidate(Status::measuring); active=true; }
         const auto tag=epoch.load(std::memory_order_relaxed);
+        if (!meterQueue.push(x0,x1,y0,y1,count,tag)) invalidate(Status::overload);
         if (!queue.push(x0,x1,y0,y1,count,tag)) invalidate(Status::overload);
     }
+    MeterView meterSnapshot() const { std::lock_guard<std::mutex> lock(meterMutex); return view; }
+    void resetIntegrated() noexcept { resetMeter.fetch_add(1); }
     Result snapshot() const noexcept {
         Result result;
         result.status=static_cast<Status>(fallback.load(std::memory_order_relaxed));
@@ -157,7 +163,12 @@ private:
                     x[0][i]=frame.x0; x[1][i]=frame.x1; y[0][i]=frame.y0; y[1][i]=frame.y1;
                 }
                 Result result;
-                try { result=analyzer.analyse(x,y); }
+                try {
+                    PredictionModel learned; result=analyzer.analyse(x,y,&learned);
+                    if(result.valid() && learned.valid() && tag==epoch.load()) {
+                        std::lock_guard<std::mutex> lock(modelMutex); liveModel=std::move(learned); modelEpoch=tag;
+                    }
+                }
                 catch (...) { result.status=Status::invalid; }
                 if (tag==epoch.load(std::memory_order_acquire) && running.load(std::memory_order_acquire))
                     publish(continuity.update(result,tag),tag);
@@ -171,6 +182,62 @@ private:
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
+    void runMeter() {
+        const auto hop=static_cast<std::size_t>(config.sampleRate*.1);
+        const auto margin=static_cast<std::size_t>(config.maxDelay)+2*config.taps;
+        std::deque<CaptureFrame> history;
+        std::uint64_t tag=0,reset=resetMeter.load();
+        EnergyMeter energies(static_cast<std::size_t>(config.sampleRate*3));
+        auto last=std::chrono::steady_clock::now();
+        while(running.load()) {
+            meterQueue.consume([&](const CaptureFrame& f) {
+                if(f.epoch!=epoch.load())return;
+                if(tag!=f.epoch) {tag=f.epoch;history.clear();energies.resetShort();}
+                history.push_back(f);last=std::chrono::steady_clock::now();
+            });
+            if(reset!=resetMeter.load()) {reset=resetMeter.load();energies.resetIntegrated();}
+            while(history.size()>=2*margin+hop) {
+                PredictionModel model;
+                {std::lock_guard<std::mutex> lock(modelMutex);if(modelEpoch==tag)model=liveModel;}
+                Channels x(2,std::vector<double>(hop)),y=x,e=x;
+                for(std::size_t i=0;i<hop;++i) {
+                    const auto& f=history[margin+i];x[0][i]=f.x0;x[1][i]=f.x1;y[0][i]=f.y0;y[1][i]=f.y1;
+                }
+                MeterView next;next.before=spectrum(x,config.sampleRate);next.after=spectrum(y,config.sampleRate);next.spectrumValid=true;
+                if(model.valid()) {
+                    Channels input(2,std::vector<double>(hop+model.taps-1));
+                    const auto first=static_cast<std::ptrdiff_t>(margin)-model.delay+static_cast<std::ptrdiff_t>(model.taps/4)-static_cast<std::ptrdiff_t>(model.taps-1);
+                    for(std::size_t i=0;i<input[0].size();++i) {const auto& f=history[static_cast<std::size_t>(first)+i];input[0][i]=f.x0;input[1][i]=f.x1;}
+                    const auto predicted=predictLive(input,model,hop);
+                    double means[2]={0,0};
+                    for(std::size_t c=0;c<2;++c) means[c]=std::accumulate(y[c].begin(),y[c].end(),0.)/hop;
+                    for(std::size_t i=0;i<hop;++i) {
+                        double err=0,sig=0;
+                        for(std::size_t c=0;c<2;++c) {e[c][i]=y[c][i]-predicted[std::min(c,predicted.size()-1)][i];err+=e[c][i]*e[c][i];sig+=(y[c][i]-means[c])*(y[c][i]-means[c]);}
+                        energies.add(err,sig);
+                    }
+                    next.residual=spectrum(e,config.sampleRate);next.residualValid=true;
+                }
+                energies.fill(next,config.sampleRate);
+                if(!model.valid())next.shortValid=false;
+                {std::lock_guard<std::mutex> lock(meterMutex);view=next;}
+                history.erase(history.begin(),history.begin()+static_cast<std::ptrdiff_t>(hop));
+            }
+            if(tag!=epoch.load() || std::chrono::steady_clock::now()-last>std::chrono::milliseconds(1600)) {
+                MeterView paused;energies.fill(paused,config.sampleRate);paused.shortValid=false;
+                std::lock_guard<std::mutex> lock(meterMutex);view=paused;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    mutable std::mutex meterMutex;
+    std::mutex modelMutex;
+    MeterView view;
+    PredictionModel liveModel;
+    std::uint64_t modelEpoch=0;
+    std::atomic<std::uint64_t> resetMeter{0};
+    CaptureQueue meterQueue;
+    std::thread meterWorker;
     Config config;
     CaptureQueue queue;
     std::thread worker;

@@ -3,12 +3,16 @@
 #include <limits>
 
 namespace distortion {
+struct PredictionModel {
+    Channels kernels; // output x (input*taps+intercept), raw input basis
+    std::size_t taps=0; int delay=0; bool valid() const { return !kernels.empty(); }
+};
 class Analyzer {
 public:
     explicit Analyzer(Config configuration = Config{}) : config(configuration) {}
     const Config config;
 
-    Result analyse(const Channels& reference, const Channels& processed) const {
+    Result analyse(const Channels& reference, const Channels& processed, PredictionModel* exported=nullptr) const {
         Result result;
         if (reference.empty() || processed.empty() || reference.size()>2 || processed.size()>2) {
             result.status=Status::invalid; return result;
@@ -30,11 +34,29 @@ public:
         for (std::size_t c=0; c<reference.size(); ++c) toneX[c].assign(reference[c].end()-static_cast<std::ptrdiff_t>(toneLength),reference[c].end());
         for (std::size_t c=0; c<processed.size(); ++c) toneY[c].assign(processed[c].end()-static_cast<std::ptrdiff_t>(toneLength),processed[c].end());
         auto tone=analyseTone(toneX,toneY,config);
-        if (tone.valid()) return tone;
+        if (tone.valid() && exported==nullptr) return tone;
+        if (tone.valid() && exported!=nullptr) {
+            // A two-tap linear predictor spans sine and cosine at the known
+            // fundamental. Higher harmonics remain in the measured residue.
+            PredictionModel m; m.taps=2; m.delay=0;
+            for (const auto& y:processed) {
+                std::vector<double> gram(9), b(3);
+                for (std::size_t i=n-toneLength+1;i<n;++i) {
+                    const double v[3]={reference[0][i],reference[0][i-1],1};
+                    for(int a=0;a<3;++a) { b[a]+=v[a]*y[i]; for(int c=0;c<3;++c) gram[a*3+c]+=v[a]*v[c]; }
+                }
+                if (!choleskySolve(gram,b,3)) return tone;
+                m.kernels.push_back({b[0],b[1],0,0,b[2]});
+            }
+            *exported=std::move(m); return tone;
+        }
 
         Channels inputs=reference;
+        std::vector<double> means;
+        double co=1,si=0;
         for (auto& c : inputs) {
             const double mean=std::accumulate(c.begin(),c.end(),0.0)/n;
+            means.push_back(mean);
             for (auto& v : c) v-=mean;
         }
         // A real covariance eigendecomposition handles mono, correlated stereo,
@@ -42,7 +64,7 @@ public:
         // singular two-input normal equation.
         if (inputs.size()==2) {
             const double a=energy(inputs[0]), b=dot(inputs[0],inputs[1]), d=energy(inputs[1]);
-            const double theta=0.5*std::atan2(2*b,a-d), co=std::cos(theta), si=std::sin(theta);
+            const double theta=0.5*std::atan2(2*b,a-d); co=std::cos(theta); si=std::sin(theta);
             for (std::size_t i=0; i<n; ++i) {
                 const double l=inputs[0][i], r=inputs[1][i];
                 inputs[0][i]=co*l+si*r; inputs[1][i]=-si*l+co*r;
@@ -71,6 +93,7 @@ public:
         LinearModel heldOut(validationInput,config.taps,config.validation);
         double error=0, signal=0, trainingError=0, trainingSignal=0;
         double predictedEnergy=0, cross=0;
+        PredictionModel learned; learned.taps=config.taps; learned.delay=alignment.first;
         for (const auto& channel : processed) {
             std::vector<double> target(channel.begin()+static_cast<std::ptrdiff_t>(trainStart),channel.begin()+static_cast<std::ptrdiff_t>(trainStart+config.train));
             auto fit=LinearModel::Fit{};
@@ -79,6 +102,14 @@ public:
             result.iterations=std::max(result.iterations,fit.iterations);
             result.convergence=std::max(result.convergence,fit.convergence);
             if (fit.h.empty() || !std::isfinite(fit.convergence)) { result.status=Status::invalid; return result; }
+            std::vector<double> raw(2*config.taps+1,0.0);
+            for (std::size_t k=0;k<config.taps;++k) {
+                const double a=fit.h[k], b=inputs.size()>1?fit.h[config.taps+k]:0;
+                raw[k]=co*a-si*b; raw[config.taps+k]=reference.size()>1?si*a+co*b:0;
+            }
+            raw.back()=fit.h.back();
+            for (std::size_t k=0;k<config.taps;++k) raw.back()-=raw[k]*means[0]+raw[config.taps+k]*(means.size()>1?means[1]:0);
+            learned.kernels.push_back(std::move(raw));
             const auto trainPrediction=model.predict(fit.h);
             const auto prediction=heldOut.predict(fit.h);
             const double trainMean=std::accumulate(target.begin(),target.end(),0.0)/target.size();
@@ -107,6 +138,7 @@ public:
         else if (result.convergence>2.e-4)
             result.status=Status::measuring;
         else result.status=Status::valid;
+        if (exported && result.valid()) *exported=std::move(learned);
         return result;
     }
 private:

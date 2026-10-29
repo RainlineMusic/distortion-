@@ -66,6 +66,16 @@ int main() {
     for (std::uint64_t k=1;k<=10000;++k) { float v=static_cast<float>(k); while (!queue.push(&v,&v,&v,&v,1,k)) std::this_thread::yield(); }
     done.store(true); consumer.join(); require(corrupt.load()==0,"SPSC concurrent integrity");
 
+    EnergyMeter stats(30); MeterView statsView;
+    for(int i=0;i<30;++i)stats.add(.001,1);
+    stats.fill(statsView,10);
+    require(statsView.shortValid && std::abs(statsView.shortPercent-3.16227766)<1.e-6,"minus 30 dB equals 3.162 percent");
+    for(int i=0;i<30;++i)stats.add(.04,4);
+    stats.fill(statsView,10);
+    require(std::abs(statsView.shortPercent-10)<1.e-8,"Short uses only last 3 seconds");
+    require(std::abs(statsView.integratedPercent-100*std::sqrt(.041/5))<1.e-8,"Integrated weights energies rather than percentages");
+    stats.resetIntegrated();stats.fill(statsView,10);
+    require(!statsView.integratedValid && statsView.shortValid,"Integrated reset preserves Short");
     RealtimeAnalyzer meter; meter.prepare(48000);
     Config cfg; const auto count=cfg.requiredSamples();
     std::vector<float> dry(count+2048),wet(dry.size());
@@ -95,7 +105,7 @@ int main() {
     std::mt19937 rng(188); std::uniform_real_distribution<float> random(-.3f,.3f);
     std::vector<float> pre(1024),post(1024);
     int visible=0;
-    for (int blockIndex=0;blockIndex<200;++blockIndex) {
+    for (int blockIndex=0;blockIndex<360;++blockIndex) {
         for (std::size_t i=0;i<pre.size();++i) { pre[i]=blockIndex%32==0?0.0f:random(rng); post[i]=pre[i]*.7f; }
         forbidAllocation=true; meter.push(pre.data(),pre.data(),post.data(),post.data(),pre.size()); forbidAllocation=false;
         std::this_thread::sleep_for(std::chrono::milliseconds(22));
@@ -105,6 +115,9 @@ int main() {
     while (!meter.snapshot().valid() && std::chrono::steady_clock::now()<gapDeadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     require(meter.snapshot().valid(),"48k / 1024 acquires despite recurring short gaps");
+    const auto live=meter.meterSnapshot();
+    require(live.shortValid && live.shortPercent<0.001,"3 second live null/gain meter");
+    require(live.integratedValid && live.seconds>3,"integrated counts measured samples");
     std::fill(pre.begin(),pre.end(),0.0f);
     meter.push(pre.data(),pre.data(),pre.data(),pre.data(),pre.size());
     require(meter.snapshot().valid(),"one 1024-sample quiet block does not erase the number");

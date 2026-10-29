@@ -1,46 +1,51 @@
 ---
 name: Distortion
-description: A compact native analyzer in the supplied Clip Pocket Solid Dark material.
+description: Native spectral and residual analyzer in Clip Pocket Solid Dark.
 colors:
   chassis: "#151d25"
   chassis-light: "#1c2732"
   glass: "#14191f"
   label: "#adb9c7"
-  readout: "#a9cbee"
-  edge: "#d9e3ee"
+  before: "#8eafa7"
+  after: "#a9cbee"
+  residual: "#e5b887"
+  button: "#27333e"
 typography:
   title:
     fontFamily: Inter
-    fontSize: "23px"
+    fontSize: "25px"
     fontWeight: 500
   value:
     fontFamily: Inter
-    fontSize: "62px"
+    fontSize: "43px"
+    fontWeight: 400
+  section:
+    fontFamily: Inter
+    fontSize: "12px"
+    fontWeight: 500
+  detail:
+    fontFamily: Inter
+    fontSize: "11px"
     fontWeight: 400
 rounded:
-  recess: "1.5px"
+  recess: "2px"
 spacing:
   panel-inset: "18px"
 components:
   analyzer-surface:
     backgroundColor: "{colors.chassis}"
-    width: "414px"
-    height: "218px"
+    width: "800px"
+    height: "648px"
+  spectrum-panel:
+    backgroundColor: "{colors.glass}"
+    rounded: "{rounded.recess}"
+    width: "764px"
+    height: "461px"
   measurement-panel:
     backgroundColor: "{colors.glass}"
     rounded: "{rounded.recess}"
-    width: "378px"
-    height: "182px"
-  title:
-    textColor: "{colors.label}"
-    typography: "{typography.title}"
-    width: "342px"
-    height: "32px"
-  readout:
-    textColor: "{colors.readout}"
-    typography: "{typography.value}"
-    width: "350px"
-    height: "81px"
+    width: "764px"
+    height: "102px"
 ---
 
 # Design System: Distortion
@@ -49,78 +54,69 @@ components:
 
 **Creative North Star: "Clip Pocket Solid Dark"**
 
-A single recessed measurement display inside the supplied Clip Pocket Solid Dark material. The visual identity is restrained and compact: muted Inter title, large output-blue percentage, and a shallow dark recess.
-
-The implemented Operate surface contains only “Distortion” and a percentage or em dash. Measurement definitions and unavailable-state guidance live in the readout’s accessibility description, without additional visible copy.
+A native instrument in the supplied dark blue-gray material. Embedded Inter, recessed panels and restrained trace colors preserve the Clip Pocket identity while giving spectral comparison the largest area.
 
 **Key Characteristics:**
 
-- Fixed native window with one centered measurement.
-- Embedded Inter Medium title and Inter Regular value.
-- Dark radial chassis shading, a shallow inset shade, and a fine lower edge.
+- Before/after spectra above the added residual spectrum.
+- A separate Short / Integrated measurement panel with Reset; no Momentary meter.
+- A fixed native window and a quiet dark radial chassis.
 
 ## Colors
 
-The supplied dark blue-gray material uses one pale blue readout accent. The frontmatter is the source of color values.
-
-### Primary
-
-- **Output Blue** (`readout`): the percentage and unavailable em dash.
-
-### Neutral
-
-- **Chassis Dark** (`chassis`) and **Chassis Light** (`chassis-light`): the outer radial gradient, light at the upper left and dark toward the opposite corner.
-- **Recess Glass** (`glass`): the dark measurement panel.
-- **Muted Label** (`label`): the title.
-- **Fine Edge** (`edge`): the panel’s lower hairline at 13% opacity.
+The frontmatter owns the palette. Green identifies Before, pale blue identifies After and both percentage readouts, and amber identifies added residual. Muted ink labels, low-opacity ink grid lines and dark recesses support the data without competing with it. Reset uses a darker blue-gray button surface.
 
 ## Typography
 
-Both roles use embedded Inter typefaces from the supplied project: Inter Medium for the title and Inter Regular for the value. The frontmatter sizes denote JUCE logical font heights passed to `FontOptions::withHeight`; they are not a claim about CSS em sizing or measured glyph bounds.
-
-- **Title:** centered in its label, with no label border.
-- **Value:** centered in its label, with no label border. JUCE may compress it horizontally down to a 0.6 scale for long values.
+Embedded Inter Medium is used for the title and section labels; Inter Regular is used for values and details. Sizes are JUCE logical font heights passed to `FontOptions::withHeight`, not measured glyph bounds or CSS em sizes. The title uses the title token; values use the value token. State messages use 13–14 logical pixels.
 
 ## Layout
 
-The native window is fixed at 414 × 218 logical pixels and is not resizable. Host/OS pixel scaling remains native; there are no responsive breakpoints.
+The editor is fixed at 800 × 648 logical pixels and is not resizable. Host/OS scaling remains native; there are no responsive breakpoints.
 
-The panel is inset by the spacing token on every side. Title bounds are `(36, 43, 342, 32)` and value bounds are `(32, 87, 350, 81)`, expressed as logical `(x, y, width, height)`. Both labels are horizontally centered. These coordinates describe this sole working surface, not a general grid for hypothetical screens.
+The spectrum recess is `(18, 66, 764, 461)` and the measurement recess is `(18, 535, 764, 102)`. Before/after plot bounds are `(72, 115, 686, 196)`; residual plot bounds are `(72, 381, 686, 107)`. Both plots share a logarithmic 20 Hz–20 kHz axis and a displayed −96 to 0 dBFS range. These are raw signal spectra per 1/6 octave, not a system transfer response.
+
+Short sits at the left of the bottom panel and Integrated at the center, with a vertical divider between them. Reset sits at the right. The title and `Estimated residual` descriptor occupy the header.
 
 ## Elevation & Depth
 
-A JUCE radial gradient shades the chassis. The panel has a black-to-transparent inset shade over its top 14 logical pixels, starting at 60% black, and a one-pixel lower hairline using the edge token at 13% opacity. There are no raised surfaces or drop shadows.
-
-The chassis and recess are drawn into a cached RGB image on resize. The editor draws that image through JUCE Graphics, with no custom OpenGL context or idle animation.
+A radial gradient shades the chassis from its upper left. Flat dark recesses and fine, low-opacity dividers establish depth; there are no raised cards or decorative shadows. The chassis is cached as an RGB image on resize and drawn with JUCE Graphics, without a custom OpenGL context.
 
 ## Shapes
 
-The outer window is rectangular. The inset panel has nearly square corners using the recess radius token. The only fine stroke is the lower panel edge; neither label has a border.
+The window is rectangular. Recesses have nearly square corners using the recess token. Traces use curved 1.65-pixel strokes. Grid lines are subtle and subordinate to traces.
 
 ## Components
 
-### Passive measurement display
+### Spectral comparison
 
-The visible content is the title `Distortion` and one value. There are no interactive controls or hover, pressed, selected, or focus variants. The editor does not request keyboard focus.
+Before is green and After is blue, with labeled line samples in the legend. Residual is amber in the lower plot. The display uses 192 logarithmically spaced band centers. Without spectrum data, show the routing prompt in the upper plot; while a model is unavailable, show `Learning the linear response...` in the lower plot.
 
-- **Valid:** show a percentage. Values below `0.005` show `0.00%`; values below `100` use two decimal places; other values below `10000` use one decimal place; values at or above `10000` show `>9999%`.
-- **Unavailable:** show an em dash in the same value slot and color. This covers measuring, no reference, silence, insufficient material, unrelated reference, capture overflow, and invalid input. The visible layout and palette do not change between these states.
-- **Accessible state:** the readout title is `Distortion measurement`. Its description distinguishes harmonic THD from estimated residual and supplies state-specific guidance for unavailable results. Those descriptions are not visible labels.
-- **Refresh:** the editor polls at 5 Hz and changes the value label only when its formatted text changes. No UI animation accompanies an update.
+### Residual measurements
 
-`Docs/Previews` contains four 2× captures from the editor rendering path: `thd-5-percent.png` (5.00%), `residual-example.png` (the explicitly synthetic 2.50% residual display), `no-reference.png`, and `measuring.png` (both em dash). These are visual references, not release-platform or DSP-validation evidence.
+Short is a rolling three-second ratio of sample energies, updated every 100 ms after model learning. Integrated is the ratio of summed residual and output energies since reset; warm-up and unavailable data do not contribute. Measured seconds appear below Integrated. These are residual estimates including noise, changing dynamics and model error, not certified loudness or harmonic THD readouts.
+
+Valid percentages below `0.005` display `0.00%`; below `100` use two decimals; below `10000` use one decimal; larger values display `>9999%`. Unavailable values use an em dash. Accessible titles distinguish Short and Integrated; descriptions explain their definitions.
+
+### Reset
+
+The native JUCE text button is labeled `Reset` and has an accessible title of `Reset integrated measurement`. It clears Integrated energy and elapsed measured time while preserving Short. Pause makes Short unavailable; pause and capture-epoch changes preserve accumulated Integrated energy.
+
+### Refresh
+
+The editor polls at 10 Hz. Analysis and spectrum generation run off the audio thread. No idle animation is added.
 
 ## Do's and Don'ts
 
 ### Do:
 
-- Do retain the supplied Clip Pocket Solid Dark palette and embedded Inter.
-- Do keep the visible surface to the title and percentage or em dash.
-- Do expose measurement definitions and unavailable-state guidance through the readout’s accessibility description.
-- Do preserve the fixed logical window and native host/OS pixel scaling.
+- Do retain Clip Pocket Solid Dark and embedded Inter.
+- Do keep Before green, After blue and residual amber.
+- Do keep Short and Integrated in their separate panel.
+- Do preserve native host/OS scaling and meaningful accessible descriptions.
 
 ### Don't:
 
-- Don’t add controls, navigation, meters, badges, footers, or signal diagrams to this surface.
-- Don’t add hover, pressed, or focus treatments to the passive readout.
-- Don’t add idle animation or a custom OpenGL context.
+- Don't add a Momentary meter.
+- Don't label residual as true THD, loudness or transfer response.
+- Don't add decorative animation or a custom OpenGL context.

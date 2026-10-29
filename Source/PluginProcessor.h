@@ -29,6 +29,8 @@ public:
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*,int) override;
     distortion::Result measurement() const noexcept { return analyzer.snapshot(); }
+    distortion::MeterView meters() const { return analyzer.meterSnapshot(); }
+    void resetIntegrated() { analyzer.resetIntegrated(); }
 private:
     template<class Sample> void capture(juce::AudioBuffer<Sample>&);
     void trackTransport(int samples);

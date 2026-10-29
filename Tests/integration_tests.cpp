@@ -21,6 +21,7 @@ void passthrough(DistortionAudioProcessor& p,int channels,int samples) {
 void save(DistortionAudioProcessorEditor& editor,const juce::File& file) {
     const auto image=editor.createComponentSnapshot(editor.getLocalBounds(),true,2.0f);
     auto stream=file.createOutputStream(); require(stream!=nullptr,"capture output stream");
+    if (stream) { stream->setPosition(0);stream->truncate(); }
     if (stream) require(juce::PNGImageFormat().writeImageToStream(image,*stream),"PNG encoding");
 }
 }
@@ -75,12 +76,20 @@ int main(int argc,char** argv) {
     processor.releaseResources();
     {
         DistortionAudioProcessorEditor editor(processor);
-        require(editor.getNumChildComponents()==2,"only title and value");
+        require(editor.getNumChildComponents()==4,"title, two readouts and reset");
         const auto folder=juce::File(argc>1?argv[1]:"ui-captures");
         require(folder.createDirectory().wasOk(),"capture folder");
         editor.displayMeasurement(reading); save(editor,folder.getChildFile("thd-5-percent.png"));
         distortion::Result residual; residual.status=distortion::Status::valid; residual.percent=2.5;
-        editor.displayMeasurement(residual); save(editor,folder.getChildFile("residual-example.png"));
+        editor.displayMeasurement(residual);
+        distortion::MeterView demo; demo.residualValid=demo.spectrumValid=demo.shortValid=demo.integratedValid=true;demo.shortPercent=2.5;demo.integratedPercent=1.84;demo.seconds=93.7;
+        for(std::size_t i=0;i<distortion::graphBands;++i) {
+            const double t=double(i)/(distortion::graphBands-1);
+            demo.before[i]=float(-38-18*t+8*std::sin(t*12)-30*std::exp(-t*45));
+            demo.after[i]=demo.before[i]+float(3*std::sin(t*7));demo.residual[i]=demo.after[i]-float(32+4*std::sin(t*17));
+        }
+        editor.displayMeters(demo);save(editor,folder.getChildFile("residual-example.png"));
+        editor.displayMeters(distortion::MeterView{});
         residual.status=distortion::Status::noReference;
         editor.displayMeasurement(residual); save(editor,folder.getChildFile("no-reference.png"));
         residual.status=distortion::Status::measuring;
