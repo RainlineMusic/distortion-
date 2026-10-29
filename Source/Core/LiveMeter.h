@@ -2,6 +2,7 @@
 #include "Analyzer.h"
 #include <deque>
 #include <mutex>
+#include <memory>
 
 namespace distortion {
 struct MeterView {
@@ -32,17 +33,37 @@ private:
 };
 // FFT convolution on the background meter worker, never on the audio thread.
 inline Channels predictLive(const Channels& x,const PredictionModel& model,std::size_t rows) {
-    FFT fft(nextPowerOfTwo(rows+2*model.taps-2));
-    std::vector<std::vector<Complex>> spectra(2,std::vector<Complex>(fft.n));
-    for(std::size_t c=0;c<2;++c) { for(std::size_t i=0;i<x[c].size();++i) spectra[c][i]=x[c][i];fft.transform(spectra[c]); }
+    // Exact sparse gain/matrix/delay paths need no FFT at all.
+    std::size_t active=0;
+    for(const auto& kernel:model.kernels) for(std::size_t i=0;i+1<kernel.size();++i) if(kernel[i]!=0)++active;
     Channels out(model.kernels.size(),std::vector<double>(rows));
-    for(std::size_t c=0;c<out.size();++c) {
-        std::vector<Complex> sum(fft.n),h(fft.n);
-        for(std::size_t input=0;input<2;++input) {
-            std::fill(h.begin(),h.end(),Complex{});
-            for(std::size_t k=0;k<model.taps;++k) h[k]=model.kernels[c][input*model.taps+k];
-            fft.transform(h);for(std::size_t k=0;k<fft.n;++k)sum[k]+=h[k]*spectra[input][k];
+    if(active<=8) {
+        for(std::size_t c=0;c<out.size();++c) {
+            std::fill(out[c].begin(),out[c].end(),model.kernels[c].back());
+            for(std::size_t input=0;input<2;++input)for(std::size_t k=0;k<model.taps;++k) {
+                const auto h=model.kernels[c][input*model.taps+k];if(h==0)continue;
+                for(std::size_t i=0;i<rows;++i)out[c][i]+=h*x[input][i+model.taps-1-k];
+            }
         }
+        return out;
+    }
+    struct Cache {std::unique_ptr<FFT> fft;Channels kernels;std::vector<std::vector<std::vector<Complex>>> h;};
+    thread_local Cache cache;
+    const auto size=nextPowerOfTwo(rows+2*model.taps-2);
+    if(!cache.fft || cache.fft->n!=size || cache.kernels!=model.kernels) {
+        cache.fft=std::make_unique<FFT>(size);cache.kernels=model.kernels;
+        cache.h.assign(out.size(),std::vector<std::vector<Complex>>(2,std::vector<Complex>(size)));
+        for(std::size_t c=0;c<out.size();++c)for(std::size_t input=0;input<2;++input) {
+            for(std::size_t k=0;k<model.taps;++k)cache.h[c][input][k]=model.kernels[c][input*model.taps+k];
+            cache.fft->transform(cache.h[c][input]);
+        }
+    }
+    auto& fft=*cache.fft;
+    std::vector<std::vector<Complex>> spectra(2,std::vector<Complex>(fft.n));
+    for(std::size_t c=0;c<2;++c) {for(std::size_t i=0;i<x[c].size();++i)spectra[c][i]=x[c][i];fft.transform(spectra[c]);}
+    for(std::size_t c=0;c<out.size();++c) {
+        std::vector<Complex> sum(fft.n);
+        for(std::size_t input=0;input<2;++input)for(std::size_t k=0;k<fft.n;++k)sum[k]+=cache.h[c][input][k]*spectra[input][k];
         fft.transform(sum,true);
         for(std::size_t i=0;i<rows;++i)out[c][i]=sum[i+model.taps-1].real()+model.kernels[c].back();
     }

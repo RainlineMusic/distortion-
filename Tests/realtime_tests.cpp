@@ -33,6 +33,20 @@ int main() {
     require(ratio(changed)<1.e-8,"gain ramp produces no residual");
     for(std::size_t c=0;c<2;++c)for(std::size_t i=0;i<4800;++i)changed[c][i]=std::tanh(source[c][i]*4)/4;
     require(ratio(changed)>5,"saturation survives envelope compensation");
+    PredictionModel convolution;convolution.taps=32;convolution.kernels=Channels(2,std::vector<double>(65));
+    Channels convolutionInput(2,std::vector<double>(95));
+    for(auto& channel:convolutionInput)for(auto& sample:channel)sample=normal(randomSource);
+    for(int pass=0;pass<3;++pass) {
+        for(auto& kernel:convolution.kernels) {std::fill(kernel.begin(),kernel.end(),0.);for(std::size_t k=0;k<(pass==0?2:64);++k)kernel[k]=normal(randomSource);kernel.back()=.03;}
+        const auto calculated=predictLive(convolutionInput,convolution,64);
+        double maximumError=0;
+        for(std::size_t c=0;c<2;++c)for(std::size_t i=0;i<64;++i) {
+            double expected=convolution.kernels[c].back();
+            for(std::size_t input=0;input<2;++input)for(std::size_t k=0;k<32;++k) expected+=convolution.kernels[c][input*32+k]*convolutionInput[input][i+31-k];
+            maximumError=std::max(maximumError,std::abs(expected-calculated[c][i]));
+        }
+        require(maximumError<1.e-10,"sparse, FFT and changed-kernel convolution agree with direct reference");
+    }
     TransportTracker transport;
     for (int i=0;i<200;++i) require(!transport.update(i*1024+(i%3)-1,true,1024),"48k / 1024 rounded position is continuous");
     require(transport.update(0,true,1024),"real backward seek invalidates");
